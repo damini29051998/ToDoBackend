@@ -11,6 +11,7 @@ const MONGO = process.env.MONGOURL;
 app.use(cors({ origin: "*" }));
 app.use(express.json());
 
+// Debug middleware
 app.use((req, res, next) => {
   console.log("Request:", req.method, req.url);
   console.log("Headers:", req.headers);
@@ -18,6 +19,7 @@ app.use((req, res, next) => {
   next();
 });
 
+// Connect to MongoDB
 mongoose
   .connect(MONGO, {
     useNewUrlParser: true,
@@ -26,20 +28,37 @@ mongoose
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.error("MongoDB connection error:", err));
 
+// Schemas and Models
 const userSchema = new mongoose.Schema({
   username: String,
   password: String,
 });
 const User = mongoose.model("User", userSchema);
 
-const taskSchema = new mongoose.Schema({
-  text: String,
-  status: String,
+const orderSchema = new mongoose.Schema({
+  productName: String,
+  quantity: Number,
   priority: String,
+  message: String,
   userId: mongoose.Schema.Types.ObjectId,
 });
-const Task = mongoose.model("Task", taskSchema);
+const Order = mongoose.model("Order", orderSchema);
 
+// Auth Middleware
+const authMiddleware = (req, res, next) => {
+  const token = req.header("Authorization")?.replace("Bearer ", "");
+  if (!token) return res.status(401).json({ message: "No token provided" });
+
+  try {
+    const decoded = jwt.verify(token, "secret");
+    req.userId = decoded.userId;
+    next();
+  } catch (err) {
+    res.status(401).json({ message: "Invalid token" });
+  }
+};
+
+// Register
 app.post("/register", async (req, res) => {
   const { username, password } = req.body;
   if (!username || !password) {
@@ -57,6 +76,7 @@ app.post("/register", async (req, res) => {
   res.json({ message: "User registered" });
 });
 
+// Login
 app.post("/login", async (req, res) => {
   const { username, password } = req.body;
   const user = await User.findOne({ username });
@@ -67,55 +87,63 @@ app.post("/login", async (req, res) => {
   res.json({ token });
 });
 
-const authMiddleware = (req, res, next) => {
-  const token = req.header("Authorization")?.replace("Bearer ", "");
-  if (!token) return res.status(401).json({ message: "No token" });
-  try {
-    const decoded = jwt.verify(token, "secret");
-    req.userId = decoded.userId;
-    next();
-  } catch (e) {
-    res.status(401).json({ message: "Invalid token" });
+// Create Order
+app.post("/orders", authMiddleware, async (req, res) => {
+  const { productName, quantity, priority = "Low", message = "" } = req.body;
+
+  if (!productName || !quantity) {
+    return res
+      .status(400)
+      .json({ message: "productName and quantity are required" });
   }
-};
 
-app.get("/tasks", authMiddleware, async (req, res) => {
-  const tasks = await Task.find({ userId: req.userId });
-  res.json(tasks);
+  const order = new Order({
+    productName,
+    quantity,
+    priority,
+    message,
+    userId: req.userId,
+  });
+
+  await order.save();
+  res.json(order);
 });
 
-app.post("/tasks", authMiddleware, async (req, res) => {
-  const { text, status = "pending", priority = "low" } = req.body;
-  const task = new Task({ text, status, priority, userId: req.userId });
-  await task.save();
-  res.json(task);
+// Get Orders
+app.get("/orders", authMiddleware, async (req, res) => {
+  const orders = await Order.find({ userId: req.userId });
+  res.json(orders);
 });
 
-app.delete("/tasks/:id", authMiddleware, async (req, res) => {
-  await Task.findOneAndDelete({ _id: req.params.id, userId: req.userId });
-  res.json({ message: "Task deleted" });
+// Delete Order
+app.delete("/orders/:id", authMiddleware, async (req, res) => {
+  await Order.findOneAndDelete({ _id: req.params.id, userId: req.userId });
+  res.json({ message: "Order deleted" });
 });
 
-app.patch("/tasks/:id/status", authMiddleware, async (req, res) => {
-  const { status } = req.body;
-  const task = await Task.findOneAndUpdate(
-    { _id: req.params.id, userId: req.userId },
-    { status },
-    { new: true }
-  );
-  if (!task) return res.status(404).json({ message: "Task not found" });
-  res.json(task);
-});
-
-app.patch("/tasks/:id/priority", authMiddleware, async (req, res) => {
+// Update Priority
+app.patch("/orders/:id/priority", authMiddleware, async (req, res) => {
   const { priority } = req.body;
-  const task = await Task.findOneAndUpdate(
+  const order = await Order.findOneAndUpdate(
     { _id: req.params.id, userId: req.userId },
     { priority },
     { new: true }
   );
-  if (!task) return res.status(404).json({ message: "Task not found" });
-  res.json(task);
+  if (!order) return res.status(404).json({ message: "Order not found" });
+  res.json(order);
 });
 
+// Update Message
+app.patch("/orders/:id/message", authMiddleware, async (req, res) => {
+  const { message } = req.body;
+  const order = await Order.findOneAndUpdate(
+    { _id: req.params.id, userId: req.userId },
+    { message },
+    { new: true }
+  );
+  if (!order) return res.status(404).json({ message: "Order not found" });
+  res.json(order);
+});
+
+// Start Server
 app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
