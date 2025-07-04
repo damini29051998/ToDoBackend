@@ -8,19 +8,23 @@ const app = express();
 const PORT = process.env.PORT || 8080;
 const MONGO = process.env.MONGOURL;
 
-app.use(
-  cors({
-    origin: "*",
-  })
-);
+app.use(cors({ origin: "*" }));
+app.use(express.json());
+
+app.use((req, res, next) => {
+  console.log("Request:", req.method, req.url);
+  console.log("Headers:", req.headers);
+  console.log("Body:", req.body);
+  next();
+});
 
 mongoose
   .connect(MONGO, {
     useNewUrlParser: true,
     useUnifiedTopology: true,
   })
-  .then(() => console.log("✅ MongoDB connected"))
-  .catch((err) => console.error("❌ MongoDB connection error:", err));
+  .then(() => console.log("MongoDB connected"))
+  .catch((err) => console.error("MongoDB connection error:", err));
 
 const userSchema = new mongoose.Schema({
   username: String,
@@ -38,6 +42,15 @@ const Task = mongoose.model("Task", taskSchema);
 
 app.post("/register", async (req, res) => {
   const { username, password } = req.body;
+  if (!username || !password) {
+    return res.status(400).json({ message: "Username and password required" });
+  }
+
+  const existingUser = await User.findOne({ username });
+  if (existingUser) {
+    return res.status(409).json({ message: "User already exists" });
+  }
+
   const hashed = await bcrypt.hash(password, 10);
   const user = new User({ username, password: hashed });
   await user.save();
@@ -72,7 +85,8 @@ app.get("/tasks", authMiddleware, async (req, res) => {
 });
 
 app.post("/tasks", authMiddleware, async (req, res) => {
-  const task = new Task({ ...req.body, userId: req.userId });
+  const { text, status = "pending", priority = "low" } = req.body;
+  const task = new Task({ text, status, priority, userId: req.userId });
   await task.save();
   res.json(task);
 });
@@ -82,7 +96,6 @@ app.delete("/tasks/:id", authMiddleware, async (req, res) => {
   res.json({ message: "Task deleted" });
 });
 
-// Update task status
 app.patch("/tasks/:id/status", authMiddleware, async (req, res) => {
   const { status } = req.body;
   const task = await Task.findOneAndUpdate(
@@ -94,7 +107,6 @@ app.patch("/tasks/:id/status", authMiddleware, async (req, res) => {
   res.json(task);
 });
 
-// Update task priority
 app.patch("/tasks/:id/priority", authMiddleware, async (req, res) => {
   const { priority } = req.body;
   const task = await Task.findOneAndUpdate(
